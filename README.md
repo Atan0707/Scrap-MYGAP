@@ -74,12 +74,6 @@ The server will start on `http://localhost:8000` and **automatically begin daily
 | `/mygap/download/organic` | Download Organic data as JSON file |
 | `/mygap/download/tanaman` | Download Tanaman data as JSON file |
 
-#### Scheduler Endpoints
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/scheduler/status` | GET | Get scheduler status and next run time |
-| `/scheduler/run-now` | POST | Manually trigger scraping of all sources |
-| `/scheduler/run-single/{scraper_name}` | POST | Manually trigger single scraper |
 
 #### System Endpoints
 | Endpoint | Description |
@@ -113,17 +107,6 @@ curl http://localhost:8000/mygap/data/tanaman
 curl http://localhost:8000/mygap/stats
 ```
 
-**Scheduler operations:**
-```bash
-# Check scheduler status
-curl http://localhost:8000/scheduler/status
-
-# Manually trigger all scrapers
-curl -X POST http://localhost:8000/scheduler/run-now
-
-# Manually trigger single scraper
-curl -X POST http://localhost:8000/scheduler/run-single/TBM
-```
 
 **Access interactive documentation:**
 Open `http://localhost:8000/docs` in your browser

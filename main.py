@@ -35,6 +35,48 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Helper function to read latest JSON file
+def read_latest_json_file(data_type: str):
+    """
+    Read the latest JSON file for a given data type
+    
+    Args:
+        data_type: Type of data ('tbm', 'pf', 'am', 'organic', 'tanaman')
+    
+    Returns:
+        tuple: (data, filename) where data is the JSON content and filename is the file path
+    """
+    try:
+        # Find JSON files for the specified data type
+        json_files = glob.glob(f"mygap_data_{data_type}_*.json")
+        
+        if not json_files:
+            logger.warning(f"No JSON files found for data type: {data_type}")
+            return None, None
+        
+        # Sort by modification time, get the newest
+        latest_file = max(json_files, key=os.path.getmtime)
+        logger.info(f"Reading from latest {data_type} file: {latest_file}")
+        
+        # Read the file
+        with open(latest_file, 'r', encoding='utf-8') as f:
+            file_data = json.load(f)
+            
+            # Handle different JSON file structures
+            if isinstance(file_data, list):
+                data = file_data
+            elif isinstance(file_data, dict) and 'data' in file_data:
+                data = file_data['data']
+            else:
+                data = file_data
+        
+        logger.info(f"Successfully loaded {len(data) if data else 0} records from {latest_file}")
+        return data, latest_file
+        
+    except Exception as e:
+        logger.error(f"Error reading latest JSON file for {data_type}: {str(e)}")
+        return None, None
+
 # Application startup and shutdown events
 @app.on_event("startup")
 async def startup_event():
@@ -680,35 +722,40 @@ async def get_mygap_stats():
         )
 
 @app.get("/mygap/download/tbm")
-async def download_json():
+async def download_tbm_json():
     """
-    Download MyGAP data as JSON file
+    Download MyGAP TBM data as JSON file from cached file
     
     Returns:
         JSONResponse: Raw JSON data for download
     """
     try:
-        logger.info("Preparing JSON download...")
+        logger.info("Preparing TBM JSON download from cached file...")
         
-        # Extract data
-        raw_data = extract_mygap_tbm_data(save_to_file=False)
+        # Read from latest JSON file
+        raw_data, source_file = read_latest_json_file("tbm")
         
         if raw_data is None:
             raise HTTPException(
-                status_code=500, 
-                detail="Failed to extract data from MyGAP website"
+                status_code=404, 
+                detail="No TBM JSON files found. Please trigger data scraping first."
             )
+        
+        # Get file modification time for metadata
+        file_mtime = datetime.fromtimestamp(os.path.getmtime(source_file)) if source_file else datetime.now()
         
         # Prepare download response
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"mygap_data_{timestamp}.json"
+        filename = f"mygap_data_tbm_{timestamp}.json"
         
         return JSONResponse(
             content={
                 "metadata": {
-                    "extracted_at": datetime.now().isoformat(),
+                    "source_file": os.path.basename(source_file) if source_file else "unknown",
+                    "file_created_at": file_mtime.isoformat(),
+                    "downloaded_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in PF_DATA_FIELDS]
+                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in TBM_DATA_FIELDS]
                 },
                 "data": raw_data
             },
@@ -718,36 +765,41 @@ async def download_json():
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error preparing JSON download: {str(e)}")
+        logger.error(f"Error preparing TBM JSON download: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail=f"Internal server error: {str(e)}"
         )
 
 @app.get("/mygap/download/am")
-async def download_json():
+async def download_am_json():
     """
-    Download MyGAP data as JSON file
+    Download MyGAP AM data as JSON file from cached file
     
     Returns:
         JSONResponse: Raw JSON data for download
     """
     try:
-        logger.info("Preparing JSON download...")
+        logger.info("Preparing AM JSON download from cached file...")
         
-        # Extract data
-        raw_data = extract_mygap_am_data(save_to_file=False)
+        # Read from latest JSON file
+        raw_data, source_file = read_latest_json_file("am")
         
         if raw_data is None:
             raise HTTPException(
-                status_code=500, 
-                detail="Failed to extract data from MyGAP website"
+                status_code=404, 
+                detail="No AM JSON files found. Please trigger data scraping first."
             )
+        
+        # Get file modification time for metadata
+        file_mtime = datetime.fromtimestamp(os.path.getmtime(source_file)) if source_file else datetime.now()
         
         # Prepare download response
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"mygap_data_{timestamp}.json"
+        filename = f"mygap_data_am_{timestamp}.json"
         
         # Create the actual field names used in the AM output data
         am_output_fields = []
@@ -760,7 +812,9 @@ async def download_json():
         return JSONResponse(
             content={
                 "metadata": {
-                    "extracted_at": datetime.now().isoformat(),
+                    "source_file": os.path.basename(source_file) if source_file else "unknown",
+                    "file_created_at": file_mtime.isoformat(),
+                    "downloaded_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
                     "fields": am_output_fields
                 },
@@ -772,43 +826,50 @@ async def download_json():
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error preparing JSON download: {str(e)}")
+        logger.error(f"Error preparing AM JSON download: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail=f"Internal server error: {str(e)}"
         )
 
 @app.get("/mygap/download/organic")
-async def download_json():
+async def download_organic_json():
     """
-    Download MyGAP data as JSON file
+    Download MyGAP Organic data as JSON file from cached file
     
     Returns:
         JSONResponse: Raw JSON data for download
     """
     try:
-        logger.info("Preparing JSON download...")
+        logger.info("Preparing Organic JSON download from cached file...")
         
-        # Extract data
-        raw_data = extract_mygap_organic_data(save_to_file=False)
+        # Read from latest JSON file
+        raw_data, source_file = read_latest_json_file("organic")
         
         if raw_data is None:
             raise HTTPException(
-                status_code=500, 
-                detail="Failed to extract data from MyGAP website"
+                status_code=404, 
+                detail="No Organic JSON files found. Please trigger data scraping first."
             )
+        
+        # Get file modification time for metadata
+        file_mtime = datetime.fromtimestamp(os.path.getmtime(source_file)) if source_file else datetime.now()
         
         # Prepare download response
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"mygap_data_{timestamp}.json"
+        filename = f"mygap_data_organic_{timestamp}.json"
         
         return JSONResponse(
             content={
                 "metadata": {
-                    "extracted_at": datetime.now().isoformat(),
+                    "source_file": os.path.basename(source_file) if source_file else "unknown",
+                    "file_created_at": file_mtime.isoformat(),
+                    "downloaded_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in PF_DATA_FIELDS]
+                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in ORGANIC_DATA_FIELDS]
                 },
                 "data": raw_data
             },
@@ -818,43 +879,50 @@ async def download_json():
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error preparing JSON download: {str(e)}")
+        logger.error(f"Error preparing Organic JSON download: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail=f"Internal server error: {str(e)}"
         )
 
 @app.get("/mygap/download/tanaman")
-async def download_json():
+async def download_tanaman_json():
     """
-    Download MyGAP data as JSON file
+    Download MyGAP Tanaman data as JSON file from cached file
     
     Returns:
         JSONResponse: Raw JSON data for download
     """
     try:
-        logger.info("Preparing JSON download...")
+        logger.info("Preparing Tanaman JSON download from cached file...")
         
-        # Extract data
-        raw_data = extract_mygap_tanaman_data(save_to_file=False)
+        # Read from latest JSON file
+        raw_data, source_file = read_latest_json_file("tanaman")
         
         if raw_data is None:
             raise HTTPException(
-                status_code=500, 
-                detail="Failed to extract data from MyGAP website"
+                status_code=404, 
+                detail="No Tanaman JSON files found. Please trigger data scraping first."
             )
+        
+        # Get file modification time for metadata
+        file_mtime = datetime.fromtimestamp(os.path.getmtime(source_file)) if source_file else datetime.now()
         
         # Prepare download response
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"mygap_data_{timestamp}.json"
+        filename = f"mygap_data_tanaman_{timestamp}.json"
         
         return JSONResponse(
             content={
                 "metadata": {
-                    "extracted_at": datetime.now().isoformat(),
+                    "source_file": os.path.basename(source_file) if source_file else "unknown",
+                    "file_created_at": file_mtime.isoformat(),
+                    "downloaded_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
-                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in PF_DATA_FIELDS]
+                    "fields": [field if field != 'projek' else 'kategori_pemohon' for field in TANAMAN_DATA_FIELDS]
                 },
                 "data": raw_data
             },
@@ -864,41 +932,48 @@ async def download_json():
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error preparing JSON download: {str(e)}")
+        logger.error(f"Error preparing Tanaman JSON download: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail=f"Internal server error: {str(e)}"
         )
 
 @app.get("/mygap/download/pf")
-async def download_json():
+async def download_pf_json():
     """
-    Download MyGAP data as JSON file
+    Download MyGAP PF data as JSON file from cached file
     
     Returns:
         JSONResponse: Raw JSON data for download
     """
     try:
-        logger.info("Preparing JSON download...")
+        logger.info("Preparing PF JSON download from cached file...")
         
-        # Extract data
-        raw_data = extract_mygap_pf_data(save_to_file=False)
+        # Read from latest JSON file
+        raw_data, source_file = read_latest_json_file("pf")
         
         if raw_data is None:
             raise HTTPException(
-                status_code=500, 
-                detail="Failed to extract data from MyGAP website"
+                status_code=404, 
+                detail="No PF JSON files found. Please trigger data scraping first."
             )
+        
+        # Get file modification time for metadata
+        file_mtime = datetime.fromtimestamp(os.path.getmtime(source_file)) if source_file else datetime.now()
         
         # Prepare download response
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"mygap_data_{timestamp}.json"
+        filename = f"mygap_data_pf_{timestamp}.json"
         
         return JSONResponse(
             content={
                 "metadata": {
-                    "extracted_at": datetime.now().isoformat(),
+                    "source_file": os.path.basename(source_file) if source_file else "unknown",
+                    "file_created_at": file_mtime.isoformat(),
+                    "downloaded_at": datetime.now().isoformat(),
                     "total_records": len(raw_data),
                     "fields": [field if field != 'projek' else 'kategori_pemohon' for field in PF_DATA_FIELDS]
                 },
@@ -910,8 +985,10 @@ async def download_json():
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error preparing JSON download: {str(e)}")
+        logger.error(f"Error preparing PF JSON download: {str(e)}")
         raise HTTPException(
             status_code=500, 
             detail=f"Internal server error: {str(e)}"

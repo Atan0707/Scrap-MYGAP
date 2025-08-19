@@ -15,6 +15,15 @@ from scrap_am import extract_mygap_am_data, DATA_FIELDS as AM_DATA_FIELDS
 from scrap_my_organic import extract_mygap_organic_data, DATA_FIELDS as ORGANIC_DATA_FIELDS
 from scrap_tanaman import extract_mygap_tanaman_data, DATA_FIELDS as TANAMAN_DATA_FIELDS
 
+# Import scheduler
+from scheduler import (
+    start_scheduler, 
+    stop_scheduler, 
+    run_manual_scraping, 
+    get_scheduler_status, 
+    scraping_scheduler
+)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,9 +31,25 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="MyGAP Data Scraper API",
-    description="API to fetch Malaysian Good Agricultural Practice (MyGAP) certification data",
+    description="API to fetch Malaysian Good Agricultural Practice (MyGAP) certification data with automated scheduling",
     version="1.0.0"
 )
+
+# Application startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    """Start the scheduler when the application starts"""
+    logger.info("Starting MyGAP Data Scraper API...")
+    # Start the scheduler for daily scraping at midnight (00:00)
+    start_scheduler("00:00")
+    logger.info("Automated daily scraping scheduler started at 00:00 (midnight)")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the scheduler when the application shuts down"""
+    logger.info("Shutting down MyGAP Data Scraper API...")
+    stop_scheduler()
+    logger.info("Scheduler stopped")
 
 # Specific Pydantic models for each scraper type
 class TBMRecord(BaseModel):
@@ -147,18 +172,38 @@ class StatsResponse(BaseModel):
     timestamp: str
     field_statistics: List[FieldStats]
 
+class SchedulerStatusResponse(BaseModel):
+    success: bool
+    message: str
+    timestamp: str
+    scheduler_running: bool
+    next_run_time: Optional[str] = None
+    available_scrapers: List[str]
+
+class ManualScrapingResponse(BaseModel):
+    success: bool
+    message: str
+    timestamp: str
+    started_at: str
+
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
     return {
-        "message": "MyGAP Data Scraper API",
+        "message": "MyGAP Data Scraper API with Automated Scheduling",
         "version": "1.0.0",
+        "scheduler_info": "Automatically scrapes all data sources daily at midnight",
         "endpoints": {
+            "/mygap/data/tbm": "Fetch MyGAP TBM certification data",
             "/mygap/data/pf": "Fetch MyGAP Plant & Fresh certification data",
             "/mygap/data/am": "Fetch MyGAP Apiary Management certification data",
             "/mygap/data/organic": "Fetch MyGAP Organic certification data",
             "/mygap/data/tanaman": "Fetch MyGAP Tanaman certification data",
             "/mygap/stats": "Get statistics about the data",
+            # "/scheduler/status": "Get scheduler status and next run time",
+            # "/scheduler/run-now": "Manually trigger scraping of all sources",
+            # "/scheduler/run-single/{scraper_name}": "Manually trigger single scraper",
+            "/health": "Health check endpoint",
             "/docs": "API documentation (Swagger UI)",
             "/redoc": "API documentation (ReDoc)"
         }
@@ -872,13 +917,123 @@ async def download_json():
             detail=f"Internal server error: {str(e)}"
         )
 
+@app.get("/scheduler/status", response_model=SchedulerStatusResponse)
+async def get_scheduler_status():
+    """
+    Get the current status of the scheduler
+    
+    Returns:
+        SchedulerStatusResponse: Current scheduler status and next run time
+    """
+    try:
+        status = get_scheduler_status()
+        
+        return SchedulerStatusResponse(
+            success=True,
+            message="Scheduler status retrieved successfully",
+            timestamp=datetime.now().isoformat(),
+            scheduler_running=status["running"],
+            next_run_time=status["next_run"],
+            available_scrapers=status["available_scrapers"]
+        )
+    except Exception as e:
+        logger.error(f"Error getting scheduler status: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+@app.post("/scheduler/run-now", response_model=ManualScrapingResponse)
+async def run_manual_scraping_endpoint():
+    """
+    Manually trigger scraping of all data sources
+    
+    Returns:
+        ManualScrapingResponse: Confirmation that manual scraping has started
+    """
+    try:
+        # Start manual scraping in background thread to avoid blocking
+        import threading
+        
+        start_time = datetime.now()
+        
+        def run_scraping():
+            run_manual_scraping()
+        
+        thread = threading.Thread(target=run_scraping, daemon=True)
+        thread.start()
+        
+        return ManualScrapingResponse(
+            success=True,
+            message="Manual scraping of all data sources has been started in background",
+            timestamp=datetime.now().isoformat(),
+            started_at=start_time.isoformat()
+        )
+    except Exception as e:
+        logger.error(f"Error starting manual scraping: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+@app.post("/scheduler/run-single/{scraper_name}")
+async def run_single_scraper_endpoint(scraper_name: str):
+    """
+    Manually trigger a single scraper
+    
+    Args:
+        scraper_name: Name of the scraper ('TBM', 'PF', 'AM', 'Organic', 'Tanaman')
+    
+    Returns:
+        dict: Result of the scraping operation
+    """
+    try:
+        # Validate scraper name
+        valid_scrapers = ['TBM', 'PF', 'AM', 'Organic', 'Tanaman']
+        if scraper_name not in valid_scrapers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid scraper name. Must be one of: {valid_scrapers}"
+            )
+        
+        start_time = datetime.now()
+        
+        # Run single scraper in background thread
+        def run_scraper():
+            return scraping_scheduler.run_single_scraper(scraper_name)
+        
+        import threading
+        thread = threading.Thread(target=run_scraper, daemon=True)
+        thread.start()
+        
+        return {
+            "success": True,
+            "message": f"Manual scraping of {scraper_name} data source has been started in background",
+            "timestamp": datetime.now().isoformat(),
+            "started_at": start_time.isoformat(),
+            "scraper": scraper_name
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting {scraper_name} scraper: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    scheduler_status = get_scheduler_status()
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "service": "MyGAP Data Scraper API"
+        "service": "MyGAP Data Scraper API",
+        "scheduler": {
+            "running": scheduler_status["running"],
+            "next_run": scheduler_status["next_run"]
+        }
     }
 
 if __name__ == "__main__":

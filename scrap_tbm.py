@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import csv
 import json
+import re
 from datetime import datetime
 
 # Define the data fields we want to extract
@@ -49,11 +50,33 @@ def get_full_text_from_dialog(cell):
                     try:
                         json_data = json.loads(full_text)
                         if isinstance(json_data, dict) and 'textCont' in json_data:
-                            return json_data['textCont']
+                            content = json_data['textCont']
+                            # Clean up content - remove HTML tags and normalize line breaks
+                            content = content.replace('<br />', ', ').replace('<br/>', ', ').replace('<br>', ', ')
+                            content = content.replace('\\n', ', ').replace('\n', ', ')
+                            # Remove any remaining HTML tags
+                            content = re.sub(r'<[^>]+>', '', content)
+                            # Clean up multiple commas and trailing commas
+                            content = re.sub(r',\s*,', ',', content)
+                            content = re.sub(r',\s*$', '', content)
+                            return content.strip()
                     except json.JSONDecodeError:
                         pass
                     
-                    return full_text if full_text else main_text
+                    # If not JSON, clean the HTML content anyway
+                    if full_text:
+                        content = full_text
+                        # Clean up content - remove HTML tags and normalize line breaks
+                        content = content.replace('<br />', ', ').replace('<br/>', ', ').replace('<br>', ', ')
+                        content = content.replace('\\n', ', ').replace('\n', ', ')
+                        # Remove any remaining HTML tags
+                        content = re.sub(r'<[^>]+>', '', content)
+                        # Clean up multiple commas and trailing commas
+                        content = re.sub(r',\s*,', ',', content)
+                        content = re.sub(r',\s*$', '', content)
+                        return content.strip()
+                    
+                    return main_text
             except Exception as e:
                 print(f"Error fetching full plant info: {e}")
                 return main_text
